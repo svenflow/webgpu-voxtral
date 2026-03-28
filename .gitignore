@@ -19,4 +19,3 @@ test-*.html
 benchmark.html
 ARCHITECTURE.md
 models/weights/
-dist/

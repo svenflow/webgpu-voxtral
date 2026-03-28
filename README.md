@@ -16,225 +16,82 @@ npm install voxtral-webgpu
 ```
 
 ```typescript
-import { VoxtralEngine, TekkenTokenizer } from 'voxtral-webgpu'
+import { Voxtral } from 'voxtral-webgpu'
 
-// Initialize engine and load weights
-const engine = new VoxtralEngine({ maxSeqLen: 2048 })
-await engine.init()
-await engine.loadWeightsFromHF()
-
-// Load tokenizer
-const tokenizer = await TekkenTokenizer.load('/models/voxtral-tts/tekken.json')
-
-// Build prompt and load voice embeddings
-const { tokens, audioTokenStart, audioTokenCount } = tokenizer.buildTTSPrompt(
-  'Hello from the browser!',
-  'casual_female',
-)
-const voiceResp = await fetch('/models/voxtral-tts/voice_embedding_f32/casual_female.bin')
-const voiceEmbeddings = new Float32Array(await voiceResp.arrayBuffer())
+// Load model (~8GB, cached in IndexedDB after first load)
+const tts = await Voxtral.load()
 
 // Generate speech
-const result = await engine.generate(
-  tokens,
-  audioTokenStart,
-  audioTokenCount,
-  voiceEmbeddings,
-  500, // max frames
-  (frame, semanticCode, acousticCodes) => {
-    console.log(`Frame ${frame}: semantic=${semanticCode}`)
-  },
-)
+const { audio } = await tts.speak('Hello from the browser!', 'casual_female')
 
-// Play audio (24kHz mono)
-const audioCtx = new AudioContext({ sampleRate: 24000 })
-const buffer = audioCtx.createBuffer(1, result.audio.length, 24000)
-buffer.getChannelData(0).set(result.audio)
-const source = audioCtx.createBufferSource()
-source.buffer = buffer
-source.connect(audioCtx.destination)
-source.start()
+// Play it
+const ctx = new AudioContext({ sampleRate: 24000 })
+const buf = ctx.createBuffer(1, audio.length, 24000)
+buf.getChannelData(0).set(audio)
+const src = ctx.createBufferSource()
+src.buffer = buf
+src.connect(ctx.destination)
+src.start()
 ```
 
-Create once, generate per request. Weights (~8GB BF16) are streamed from HuggingFace, converted to F16 on-the-fly, and cached in IndexedDB for instant reload.
-
-## Benchmarks
-
-Run the [live demo](https://svenflow.github.io/webgpu-voxtral/) to benchmark on your device.
-
-## Features
-
-- **~8GB weights** streamed from HuggingFace, converted BF16 → F16 in-browser, cached in IndexedDB
-- **20 voices** across 9 languages (EN, FR, ES, DE, IT, PT, NL, AR, HI)
-- **24kHz** mono audio output
-- **50+ WGSL compute shaders** — pure WebGPU, no WASM, no ONNX Runtime
-- **Zero dependencies** — single ES module, no runtime deps
-- **Streaming progress** — per-frame callback during generation
-- **Instant reload** — IndexedDB weight cache means first load is slow, subsequent loads are near-instant
-
-## Install
-
-```bash
-npm install voxtral-webgpu
-```
+That's it. Weights are streamed from HuggingFace, converted BF16 → F16 on the fly, and cached in IndexedDB. Second load is near-instant.
 
 ## API
 
-### `VoxtralEngine`
+### `Voxtral.load(options?)`
 
-The main engine class. Manages the WebGPU device, weight buffers, and compute pipelines.
+Initialize WebGPU and load model weights.
 
-#### `new VoxtralEngine(options?)`
+```typescript
+const tts = await Voxtral.load({
+  onProgress: (p) => console.log(`Loading: ${p.loaded}/${p.total} tensors`),
+})
+```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `config` | `VoxtralConfig` | `defaultConfig` | Model architecture config |
-| `maxSeqLen` | `number` | `4096` | Maximum sequence length for KV cache |
+| `maxSeqLen` | `number` | `4096` | Max sequence length for KV cache |
+| `weightsUrl` | `string` | HuggingFace CDN | URL to safetensors file |
+| `modelsUrl` | `string` | HuggingFace | Base URL for tokenizer & voice files |
+| `onProgress` | `(HFLoadProgress) => void` | — | Weight loading progress callback |
 
-#### `engine.init()`
+### `tts.speak(text, voice?, options?)`
 
-Initialize the WebGPU device, allocate work buffers, and compile all compute pipelines. Must be called before loading weights.
+Generate speech. Returns a `TTSResult` with `.audio` (Float32Array, 24kHz mono) and `.stats`.
 
-Returns `Promise<void>`.
-
-#### `engine.loadWeightsFromHF(safetensorsUrl?, onProgress?)`
-
-Stream and load model weights from a safetensors file. Fetches BF16 tensors via HTTP range requests, converts to F16 in-browser, and caches each tensor in IndexedDB.
+```typescript
+const { audio, stats } = await tts.speak('Bonjour le monde!', 'fr_female')
+console.log(`${stats.framesGenerated} frames in ${stats.totalMs.toFixed(0)}ms`)
+```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `safetensorsUrl` | `string` | HuggingFace CDN | URL to the consolidated safetensors file |
-| `onProgress` | `(progress: HFLoadProgress) => void` | `undefined` | Progress callback per tensor |
+| `text` | `string` | required | Text to synthesize |
+| `voice` | `string` | `'casual_female'` | Voice name (see [Voices](#voices)) |
+| `options.maxFrames` | `number` | `500` | Max frames (~40s of audio) |
+| `options.onFrame` | `function` | — | Per-frame progress callback |
 
-Returns `Promise<void>`.
+### `tts.voices`
 
-#### `engine.loadWeights(baseUrl, onProgress?)`
-
-Load pre-converted weights from a local manifest (alternative to HuggingFace streaming).
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `baseUrl` | `string` | Base URL containing the weight manifest and tensor files |
-| `onProgress` | `(progress: WeightLoadProgress) => void` | Progress callback |
-
-Returns `Promise<void>`.
-
-#### `engine.generate(tokens, audioTokenStart, audioTokenCount, voiceEmbeddings, maxFrames?, onFrame?)`
-
-Run the full 3-stage TTS pipeline: backbone prefill + autoregressive decode, FM flow-matching, and codec waveform synthesis.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `tokens` | `number[]` | required | Token IDs from `tokenizer.buildTTSPrompt()` |
-| `audioTokenStart` | `number` | required | Index where voice embedding tokens begin |
-| `audioTokenCount` | `number` | required | Number of voice embedding tokens |
-| `voiceEmbeddings` | `Float32Array \| null` | required | Pre-loaded voice embeddings `[audioTokenCount, 3072]` |
-| `maxFrames` | `number` | `500` | Maximum audio frames to generate (500 = ~40s) |
-| `onFrame` | `(frame, semanticCode, acousticCodes) => void` | `undefined` | Per-frame progress callback |
-
-Returns `Promise<TTSResult>`:
+Array of available voice names.
 
 ```typescript
-interface TTSResult {
-  semanticCodes: number[]
-  acousticCodes: number[][]
-  audio: Float32Array       // 24kHz mono PCM
-  stats: {
-    backboneMs: number
-    fmMs: number
-    codecMs: number
-    totalMs: number
-    framesGenerated: number
-  }
-}
+console.log(tts.voices)
+// ['casual_female', 'casual_male', 'fr_female', ...]
 ```
 
-#### `engine.isReady`
+### `tts.destroy()`
 
-`boolean` — `true` when the device, pipelines, and weights are all loaded.
-
-#### `engine.destroy()`
-
-Release all GPU resources (buffers, device).
-
-### `TekkenTokenizer`
-
-Mistral's Tekken BPE tokenizer (v7). Handles text encoding and TTS prompt construction.
-
-#### `TekkenTokenizer.load(url)`
-
-Load tokenizer data from a JSON file.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `url` | `string` | URL to `tekken.json` |
-
-Returns `Promise<TekkenTokenizer>`.
-
-#### `tokenizer.buildTTSPrompt(text, voice)`
-
-Build the full token sequence for TTS generation.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `text` | `string` | Text to synthesize |
-| `voice` | `string` | Voice name (e.g. `'casual_female'`, `'amandine'`) |
-
-Returns `{ tokens: number[], audioTokenStart: number, audioTokenCount: number }`.
-
-#### `tokenizer.voices`
-
-`string[]` — list of available voice names.
-
-### `TOKENS`
-
-Special token ID constants:
-
-```typescript
-const TOKENS = {
-  BOS: 1,
-  EOS: 2,
-  AUDIO: 24,
-  BEGIN_AUDIO: 25,
-  OUTPUT_AUDIO: 26,
-  AUDIO_TO_TEXT: 35,
-  TEXT_TO_AUDIO: 36,
-  // ...
-}
-```
+Release all GPU resources.
 
 ### `clearWeightCache()`
 
-Delete all cached weight tensors from IndexedDB. Call this to force re-download on next load.
+Delete cached weights from IndexedDB to force re-download.
 
-Returns `Promise<void>`.
-
-## Requirements
-
-| Browser | Status |
-|---------|--------|
-| Chrome 113+ | Supported |
-| Edge 113+ | Supported |
-| Safari 18+ (macOS) | Experimental |
-| Firefox | Not supported (no WebGPU) |
-
-**Hardware:** Requires a GPU with at least 8GB VRAM. Tested on Apple Silicon (M1+) and NVIDIA discrete GPUs. Integrated GPUs may not have enough memory.
-
-**Note:** WebGPU is a desktop-first API. Mobile browsers generally lack the GPU memory required for a 4B parameter model.
-
-## How It Works
-
+```typescript
+import { clearWeightCache } from 'voxtral-webgpu'
+await clearWeightCache()
 ```
-Text + Voice → Backbone (Ministral 3B) → FM Transformer → Codec Decoder → 24kHz Audio
-```
-
-**1. Backbone (Ministral 3B LLM):** Takes the text tokens and voice embeddings as input. Runs autoregressive generation to produce one hidden state per audio frame. 26 transformer layers, 3072-dim, GQA with 32 heads / 8 KV heads.
-
-**2. FM Transformer (Flow Matching):** Takes each hidden state and generates semantic + acoustic codes via an Euler ODE solver (8 steps). 3 transformer layers with classifier-free guidance. Produces 1 semantic code + 36 acoustic codes per frame.
-
-**3. Codec Decoder (Mimi):** Converts the code sequence into a 24kHz waveform. 4-stage upsampling with transposed convolutions and transformer blocks. Each frame produces 1920 audio samples (80ms at 24kHz).
-
-All three stages run entirely on the GPU via WebGPU compute shaders. No CPU-side inference, no WASM, no ONNX.
 
 ## Voices
 
@@ -250,6 +107,64 @@ All three stages run entirely on the GPU via WebGPU compute shaders. No CPU-side
 | Hindi | hi_female, hi_male |
 | Arabic | ar_male |
 
+## Requirements
+
+| Browser | Status |
+|---------|--------|
+| Chrome 113+ | Supported |
+| Edge 113+ | Supported |
+| Safari 18+ (macOS) | Experimental |
+| Firefox | Not supported (no WebGPU) |
+
+**Hardware:** GPU with 8GB+ VRAM. Tested on Apple Silicon (M1+) and NVIDIA discrete GPUs.
+
+## Advanced Usage
+
+For fine-grained control over the engine, tokenizer, and weight loading:
+
+```typescript
+import { VoxtralEngine, TekkenTokenizer } from 'voxtral-webgpu'
+
+const engine = new VoxtralEngine({ maxSeqLen: 2048 })
+await engine.init()
+await engine.loadWeightsFromHF(undefined, (p) => {
+  console.log(`${p.loaded}/${p.total}`)
+})
+
+const tokenizer = await TekkenTokenizer.load(
+  'https://huggingface.co/mistralai/Voxtral-4B-TTS-2603/resolve/main/tekken.json'
+)
+
+const { tokens, audioTokenStart, audioTokenCount } =
+  tokenizer.buildTTSPrompt('Hello!', 'casual_female')
+
+const voiceResp = await fetch(
+  'https://huggingface.co/mistralai/Voxtral-4B-TTS-2603/resolve/main/voice_embedding_f32/casual_female.bin'
+)
+const voiceEmbeddings = new Float32Array(await voiceResp.arrayBuffer())
+
+const result = await engine.generate(
+  tokens, audioTokenStart, audioTokenCount,
+  voiceEmbeddings, 500,
+)
+```
+
+## How It Works
+
+```
+Text + Voice → Backbone (Ministral 3B) → FM Transformer → Codec Decoder → 24kHz Audio
+```
+
+1. **Backbone (Ministral 3B):** Autoregressive transformer generates one hidden state per audio frame. 26 layers, 3072-dim, GQA.
+2. **FM Transformer:** Flow-matching ODE solver (8 steps) produces semantic + acoustic codes per frame. 3 layers with classifier-free guidance.
+3. **Codec Decoder (Mimi):** Converts codes to 24kHz waveform via transposed convolutions. Each frame = 1920 samples (80ms).
+
+All three stages run entirely on the GPU via 50+ WGSL compute shaders. No WASM, no ONNX.
+
+## Benchmarks
+
+Run the [live demo](https://svenflow.github.io/webgpu-voxtral/) to benchmark on your device.
+
 ## Development
 
 ```bash
@@ -262,4 +177,4 @@ npm run build  # Production build
 
 ## License
 
-CC BY-NC — following Mistral's model license.
+CC BY-NC 4.0 — following Mistral's model license.

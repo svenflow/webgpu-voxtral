@@ -60,15 +60,7 @@ Create once, generate per request. Weights (~8GB BF16) are streamed from Hugging
 
 ## Benchmarks
 
-[TODO: benchmark]
-
-| Device | Backbone | FM | Codec | Total | RTF | Frames |
-|--------|----------|----|-------|-------|-----|--------|
-| Mac Mini M4 Pro, Chrome 134 | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] |
-| MacBook Air M2, Chrome 134 | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] |
-| NVIDIA RTX 4090, Chrome 134 | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] | [TODO] |
-
-[**Run this benchmark on your device →**](https://svenflow.github.io/webgpu-voxtral/)
+Run the [live demo](https://svenflow.github.io/webgpu-voxtral/) to benchmark on your device.
 
 ## Features
 

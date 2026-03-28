@@ -13,3 +13,10 @@ python_gen/
 node_modules/
 __pycache__/
 *.pyc
+scripts/
+demo.html
+test-*.html
+benchmark.html
+ARCHITECTURE.md
+models/weights/
+dist/

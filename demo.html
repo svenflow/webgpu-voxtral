@@ -804,19 +804,19 @@
         const btnText = document.getElementById('downloadBtnText');
         const downloadContainer = document.getElementById('downloadBtnContainer');
 
+        // Hide status row when showing button
+        document.getElementById('statusDot').style.display = 'none';
+        document.getElementById('statusText').style.display = 'none';
+        document.getElementById('loadProgress').style.display = 'none';
+
         if (cacheInfo.count >= EXPECTED_TENSORS) {
           loadingFromCache = true;
-          setStatus('ready', 'Model cached — ready to load');
           btnText.textContent = 'Load Model';
           print('Model cached in IndexedDB (' + cachedGB + ' GB).');
         } else if (cacheInfo.count > 0) {
-          setStatus('loading', 'Partially cached (' + cacheInfo.count + '/' + EXPECTED_TENSORS + ' tensors)');
           btnText.textContent = 'Download and Load Model (~' + remainingGB + ' GB remaining)';
-          print(cacheInfo.count + ' tensors cached (' + cachedGB + ' GB). ~' + remainingGB + ' GB to download.');
         } else {
-          setStatus('loading', 'Model not loaded');
           btnText.textContent = 'Download and Load Model (~8 GB)';
-          print('Click to download ~8 GB model from HuggingFace CDN.');
         }
 
         downloadContainer.style.display = 'block';
@@ -827,6 +827,9 @@
         });
 
         downloadContainer.style.display = 'none';
+        document.getElementById('statusDot').style.display = '';
+        document.getElementById('statusText').style.display = '';
+        document.getElementById('loadProgress').style.display = '';
 
         // Now load tokenizer + weights
         setStatus('loading', 'Loading tokenizer...');

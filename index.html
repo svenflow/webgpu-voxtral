@@ -821,16 +821,16 @@
         if (cacheInfo.count >= EXPECTED_TENSORS) {
           loadingFromCache = true;
           setStatus('ready', 'Model cached — ready to load');
-          btnText.textContent = 'Load Model (cached, ' + cachedGB + ' GB)';
-          print('All ' + cacheInfo.count + ' tensors cached in IndexedDB (' + cachedGB + ' GB). Press load to initialize.');
+          btnText.textContent = 'Load Model';
+          print('All ' + cacheInfo.count + ' tensors cached in IndexedDB (' + cachedGB + ' GB).');
         } else if (cacheInfo.count > 0) {
           setStatus('loading', 'Partially cached (' + cacheInfo.count + '/' + EXPECTED_TENSORS + ' tensors)');
-          btnText.textContent = 'Download Remaining (~' + remainingGB + ' GB)';
-          print(cacheInfo.count + ' tensors cached (' + cachedGB + ' GB). Click download for remaining ~' + remainingGB + ' GB.');
+          btnText.textContent = 'Download and Load Model (~' + remainingGB + ' GB remaining)';
+          print(cacheInfo.count + ' tensors cached (' + cachedGB + ' GB). ~' + remainingGB + ' GB remaining to download.');
         } else {
-          setStatus('loading', 'Model weights required (~8 GB)');
-          btnText.textContent = 'Download Model (~8 GB)';
-          print('Model weights not cached. Click download to stream ~8 GB from HuggingFace CDN.');
+          setStatus('loading', 'Model not loaded');
+          btnText.textContent = 'Download and Load Model (~8 GB)';
+          print('Click to download ~8 GB model weights from HuggingFace CDN.');
         }
 
         downloadContainer.style.display = 'block';

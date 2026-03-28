@@ -794,25 +794,11 @@
         window._engine = engine;
         print('WebGPU device ready');
 
-        // Tokenizer
-        setStatus('loading', 'Loading tokenizer...');
-        let tokenizerUrl = './models/voxtral-tts/tekken.json';
-        try {
-          const tokHead = await fetch(tokenizerUrl, { method: 'HEAD' });
-          if (!tokHead.ok) throw new Error('not found');
-        } catch { tokenizerUrl = HF_BASE + '/tekken.json'; }
-        tokenizer = await TekkenTokenizer.load(tokenizerUrl);
-        print('Tokenizer loaded (' + tokenizer.voices.length + ' voices)');
-
-        // Populate voice grid
-        populateVoiceGrid(tokenizer.voices);
-
-        // Check cache status to decide: auto-load or show download button
+        // Check cache status — show button, don't auto-load anything
         const cacheInfo = await getWeightCacheInfo();
-        const EXPECTED_TENSORS = 386; // known tensor count for Voxtral 4B
-        const totalModelSize = 8.0; // GB approximate
+        const EXPECTED_TENSORS = 386;
+        const totalModelSize = 8.0;
 
-        // Always show button — never auto-download or auto-load
         const cachedGB = (cacheInfo.sizeBytes / (1024 * 1024 * 1024)).toFixed(1);
         const remainingGB = Math.max(0, totalModelSize - parseFloat(cachedGB)).toFixed(1);
         const btnText = document.getElementById('downloadBtnText');
@@ -822,15 +808,15 @@
           loadingFromCache = true;
           setStatus('ready', 'Model cached — ready to load');
           btnText.textContent = 'Load Model';
-          print('All ' + cacheInfo.count + ' tensors cached in IndexedDB (' + cachedGB + ' GB).');
+          print('Model cached in IndexedDB (' + cachedGB + ' GB).');
         } else if (cacheInfo.count > 0) {
           setStatus('loading', 'Partially cached (' + cacheInfo.count + '/' + EXPECTED_TENSORS + ' tensors)');
           btnText.textContent = 'Download and Load Model (~' + remainingGB + ' GB remaining)';
-          print(cacheInfo.count + ' tensors cached (' + cachedGB + ' GB). ~' + remainingGB + ' GB remaining to download.');
+          print(cacheInfo.count + ' tensors cached (' + cachedGB + ' GB). ~' + remainingGB + ' GB to download.');
         } else {
           setStatus('loading', 'Model not loaded');
           btnText.textContent = 'Download and Load Model (~8 GB)';
-          print('Click to download ~8 GB model weights from HuggingFace CDN.');
+          print('Click to download ~8 GB model from HuggingFace CDN.');
         }
 
         downloadContainer.style.display = 'block';
@@ -841,6 +827,18 @@
         });
 
         downloadContainer.style.display = 'none';
+
+        // Now load tokenizer + weights
+        setStatus('loading', 'Loading tokenizer...');
+        let tokenizerUrl = './models/voxtral-tts/tekken.json';
+        try {
+          const tokHead = await fetch(tokenizerUrl, { method: 'HEAD' });
+          if (!tokHead.ok) throw new Error('not found');
+        } catch { tokenizerUrl = HF_BASE + '/tekken.json'; }
+        tokenizer = await TekkenTokenizer.load(tokenizerUrl);
+        print('Tokenizer loaded (' + tokenizer.voices.length + ' voices)');
+        populateVoiceGrid(tokenizer.voices);
+
         await loadWeights();
       } catch (e) {
         setStatus('error', 'Initialization failed');

@@ -500,7 +500,7 @@
         </div>
         <div id="downloadBtnContainer" style="margin-top: 14px; display: none;">
           <button class="btn" id="downloadBtn" style="margin-top: 0;">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 7l4 4 4-4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="downloadBtnIcon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 7l4 4 4-4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             <span id="downloadBtnText">Download Model (~8 GB)</span>
           </button>
         </div>
@@ -812,6 +812,8 @@
         if (cacheInfo.count >= EXPECTED_TENSORS) {
           loadingFromCache = true;
           btnText.textContent = 'Load Model';
+          // Play icon instead of download arrow
+          document.getElementById('downloadBtnIcon').innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2L14 8L4 14V2Z" fill="currentColor"/></svg>';
           print('Model cached in IndexedDB (' + cachedGB + ' GB).');
         } else if (cacheInfo.count > 0) {
           btnText.textContent = 'Download and Load Model (~' + remainingGB + ' GB remaining)';
@@ -1082,14 +1084,19 @@
         const info = await getWeightCacheInfo();
         const cacheRow = document.getElementById('cacheRow');
         const cacheInfo = document.getElementById('cacheInfo');
+        const clearBtn = document.getElementById('clearCacheBtn');
         if (info.count > 0) {
           const sizeMB = (info.sizeBytes / (1024 * 1024)).toFixed(0);
           const sizeGB = (info.sizeBytes / (1024 * 1024 * 1024)).toFixed(1);
           const sizeStr = info.sizeBytes > 1024 * 1024 * 1024 ? sizeGB + ' GB' : sizeMB + ' MB';
           cacheInfo.textContent = '💾 ' + info.count + ' tensors cached (' + sizeStr + ')';
+          clearBtn.disabled = false;
+          clearBtn.style.opacity = '1';
           cacheRow.style.display = 'flex';
         } else {
           cacheInfo.textContent = 'No cached weights';
+          clearBtn.disabled = true;
+          clearBtn.style.opacity = '0.35';
           cacheRow.style.display = 'flex';
         }
       } catch (e) { /* ignore */ }

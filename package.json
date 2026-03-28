@@ -1,0 +1,53 @@
+{
+  "name": "voxtral-webgpu",
+  "version": "0.1.0",
+  "description": "Run Mistral's Voxtral 4B TTS in the browser via WebGPU. 20 voices, 9 languages, 24kHz audio. Zero dependencies.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --minify",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "voxtral",
+    "tts",
+    "text-to-speech",
+    "webgpu",
+    "mistral",
+    "voice",
+    "speech",
+    "browser",
+    "ai",
+    "ml",
+    "inference",
+    "zero-shot"
+  ],
+  "author": "svenflow",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/svenflow/webgpu-voxtral"
+  },
+  "homepage": "https://svenflow.github.io/webgpu-voxtral/",
+  "bugs": {
+    "url": "https://github.com/svenflow/webgpu-voxtral/issues"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.51",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "license": "CC-BY-NC-4.0"
+}

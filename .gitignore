@@ -1,0 +1,15 @@
+# Large model weights (8GB safetensors) - streamed from HuggingFace CDN
+models/voxtral-tts/consolidated.safetensors
+models/voxtral-tts/voice_embedding/*.pt
+
+# Reference/test data
+models/activations/
+models/weights/*.bin
+e2e_ref/
+codec_ref/
+python_gen/
+
+# Dev
+node_modules/
+__pycache__/
+*.pyc

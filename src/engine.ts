@@ -1424,14 +1424,26 @@ export class VoxtralEngine {
     let curBuf = this.createGPUBuffer(curT * codDim * 4, 'codec_cur');
     let tmpBuf = this.createGPUBuffer(curT * codDim * 4, 'codec_tmp');  // Will be resized
 
-    const encoder = d.createCommandEncoder({ label: 'codec_decode' });
-    const toDestroy: GPUBuffer[] = [];  // defer destruction until after submit
+    // Helper to run a batch of GPU work: create encoder, dispatch, submit, destroy intermediates
+    let encoder = d.createCommandEncoder({ label: 'codec_decode_pre' });
+    let toDestroy: GPUBuffer[] = [];
 
-    // Helper: each dispatch gets its own compute pass for proper barriers
     const dp = (pipeline: GPUComputePipeline, bindings: GPUBuffer[], workgroups: [number, number?, number?], label: string) => {
       const p = encoder.beginComputePass({ label });
       this.dispatch(p, pipeline, bindings, workgroups);
       p.end();
+    };
+
+    const flushAndDestroy = async (label: string) => {
+      d.pushErrorScope('validation');
+      d.queue.submit([encoder.finish()]);
+      await d.queue.onSubmittedWorkDone();
+      const err = await d.popErrorScope();
+      if (err) {
+        (globalThis as any).__codecError = `${label}: ${err.message}`;
+      }
+      for (const buf of toDestroy) buf.destroy();
+      toDestroy = [];
     };
 
     // 1. VQ lookup
@@ -1462,16 +1474,20 @@ export class VoxtralEngine {
       [concatBuf, M.codec_input_conv_w, M.codec_input_conv_g, curBuf, inputConvParams],
       [cdiv(curT, 64), codDim], 'codec_input_conv');
 
-    // 5. Four decoder stages
-    // Strides/kernels per stage (stages 0-2 have conv_up with stride 2, stage 3 has none)
+    // Submit preprocessing, free input buffers
+    toDestroy.push(semCodesBuf, acCodesBuf, semEmbed, acFloat, concatBuf);
+    await flushAndDestroy('codec_preprocess');
+
+    // 5. Four decoder stages — each stage gets its own encoder to limit peak memory
     const stageStrides = [2, 2, 2, 1];
-    const stageKernels = [4, 4, 4, 3];  // kernel for stage 3 unused
-    // Sliding windows: smallest at bottleneck (stage 0), doubling with upsampling
-    // base=16, half_upon_downsampling → decoder reverses: 2, 4, 8, 16
+    const stageKernels = [4, 4, 4, 3];
     const windows = [2, 4, 8, 16];
 
     for (let stage = 0; stage < codec.decoder_stages; stage++) {
       const stageData = M.codec_stages[stage];
+
+      // New encoder per stage
+      encoder = d.createCommandEncoder({ label: `codec_stage_${stage}` });
 
       // 2 transformer layers per stage
       for (let layerIdx = 0; layerIdx < codec.decoder_layers_per_stage; layerIdx++) {
@@ -1602,7 +1618,7 @@ export class VoxtralEngine {
           [downBuf, TL.ffn_scale, normBuf, curBuf, lsP],
           [cdiv(totalElems, 256)], `codec_s${stage}_l${layerIdx}_ffn_res`);
 
-        // Defer cleanup until after command buffer submission
+        // Mark layer intermediates for destruction at end of stage
         toDestroy.push(attnNormed, qBuf, kBuf, vBuf, scoresBuf,
           attnOutBuf, woBuf, ffnNormed, gateBuf, upBuf, downBuf);
       }
@@ -1623,9 +1639,14 @@ export class VoxtralEngine {
         curBuf = upsampledBuf;
         curT = newT;
       }
+
+      // Submit this stage and free all intermediates before next stage
+      // tmpBuf is reused across stages, don't destroy it here
+      await flushAndDestroy(`codec_stage_${stage}`);
     }
 
     // 6. Output conv: CausalConv1d(1024→240, k=7)
+    encoder = d.createCommandEncoder({ label: 'codec_output' });
     const outT = curT;
     const outBuf = this.createGPUBuffer(outT * codec.patch_size * 4, 'codec_output');
     const outConvP = this.packUniform([
@@ -1635,13 +1656,8 @@ export class VoxtralEngine {
       [curBuf, M.codec_output_conv_w, M.codec_output_conv_g, outBuf, outConvP],
       [cdiv(outT, 64), codec.patch_size], 'codec_output_conv');
 
-    d.pushErrorScope('validation');
-    d.queue.submit([encoder.finish()]);
-    await d.queue.onSubmittedWorkDone();
-    const codecErr = await d.popErrorScope();
-    if (codecErr) {
-      (globalThis as any).__codecError = codecErr.message;
-    }
+    toDestroy.push(curBuf, tmpBuf);
+    await flushAndDestroy('codec_output');
 
     // 7. Read back audio: [outT, 240] → flatten to waveform
     const totalSamples = outT * codec.patch_size;
@@ -1655,15 +1671,7 @@ export class VoxtralEngine {
       curT,
     };
 
-    // Cleanup all buffers
-    for (const buf of toDestroy) buf.destroy();
-    semCodesBuf.destroy();
-    acCodesBuf.destroy();
-    semEmbed.destroy();
-    acFloat.destroy();
-    concatBuf.destroy();
-    curBuf.destroy();
-    tmpBuf.destroy();
+    // Cleanup output buffer
     outBuf.destroy();
 
     return audio;
@@ -1698,7 +1706,7 @@ export class VoxtralEngine {
     let curBuf = this.createGPUBuffer(curT * codDim * 4, 'codec_cur');
     let tmpBuf = this.createGPUBuffer(curT * codDim * 4, 'codec_tmp');
 
-    const toDestroy: GPUBuffer[] = [];
+    let toDestroy: GPUBuffer[] = [];
 
     // Helper: each dispatch gets its own compute pass for proper barriers
     const dp = (encoder: GPUCommandEncoder, pipeline: GPUComputePipeline, bindings: GPUBuffer[], workgroups: [number, number?, number?], label: string) => {
@@ -1904,6 +1912,10 @@ export class VoxtralEngine {
         await d.queue.onSubmittedWorkDone();
         intermediates[`after_stage${stage}_transformer`] = await this.readF32Array(curBuf, curT * codDim);
       }
+
+      // Destroy stage intermediates to limit peak memory
+      for (const buf of toDestroy) buf.destroy();
+      toDestroy = [];
     }
 
     // 6. Output conv
@@ -1922,11 +1934,10 @@ export class VoxtralEngine {
 
       intermediates['after_output_conv'] = await this.readF32Array(outBuf, outT * codec.patch_size);
       intermediates['audio'] = intermediates['after_output_conv'];
-      toDestroy.push(outBuf);
+      outBuf.destroy();
     }
 
-    // Cleanup
-    for (const buf of toDestroy) buf.destroy();
+    // Cleanup remaining buffers
     semCodesBuf.destroy();
     acCodesBuf.destroy();
     semEmbed.destroy();

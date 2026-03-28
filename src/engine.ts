@@ -1486,11 +1486,10 @@ export class VoxtralEngine {
     for (let stage = 0; stage < codec.decoder_stages; stage++) {
       const stageData = M.codec_stages[stage];
 
-      // New encoder per stage
-      encoder = d.createCommandEncoder({ label: `codec_stage_${stage}` });
-
-      // 2 transformer layers per stage
+      // 2 transformer layers per stage — each layer gets its own submission
+      // to minimize peak GPU memory (only 1 layer's intermediates alive at a time)
       for (let layerIdx = 0; layerIdx < codec.decoder_layers_per_stage; layerIdx++) {
+        encoder = d.createCommandEncoder({ label: `codec_s${stage}_l${layerIdx}` });
         const TL = stageData.transformer_layers[layerIdx];
 
         // Allocate buffers for this layer's operations
@@ -1618,13 +1617,15 @@ export class VoxtralEngine {
           [downBuf, TL.ffn_scale, normBuf, curBuf, lsP],
           [cdiv(totalElems, 256)], `codec_s${stage}_l${layerIdx}_ffn_res`);
 
-        // Mark layer intermediates for destruction at end of stage
+        // Submit this layer and free all its intermediates immediately
         toDestroy.push(attnNormed, qBuf, kBuf, vBuf, scoresBuf,
           attnOutBuf, woBuf, ffnNormed, gateBuf, upBuf, downBuf);
+        await flushAndDestroy(`codec_s${stage}_l${layerIdx}`);
       }
 
       // Conv transpose upsample (stages 0-2 have conv_up with stride 2)
       if (stageData.conv_w && stageData.conv_scale && stageStrides[stage] > 1) {
+        encoder = d.createCommandEncoder({ label: `codec_s${stage}_conv` });
         const newT = curT * stageStrides[stage];
         const upsampledBuf = this.createGPUBuffer(newT * codDim * 4, 'codec_upsampled');
 
@@ -1638,11 +1639,8 @@ export class VoxtralEngine {
         toDestroy.push(curBuf);
         curBuf = upsampledBuf;
         curT = newT;
+        await flushAndDestroy(`codec_s${stage}_conv`);
       }
-
-      // Submit this stage and free all intermediates before next stage
-      // tmpBuf is reused across stages, don't destroy it here
-      await flushAndDestroy(`codec_stage_${stage}`);
     }
 
     // 6. Output conv: CausalConv1d(1024→240, k=7)

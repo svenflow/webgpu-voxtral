@@ -57,34 +57,24 @@ interface TekkenData {
 }
 
 export class TekkenTokenizer {
-  private vocab: Map<string, number> = new Map();
+  private bytesToRank: Map<string, number> = new Map();
   private specialTokens: Map<string, number> = new Map();
   private pattern: RegExp;
   private voiceNumTokens: Map<string, number> = new Map();
+  private numSpecialTokens: number;
 
   constructor(data: TekkenData) {
-    // Build vocab lookup: bytes → rank (token id)
-    // Ranks 0-149999 are vocab tokens
-    // Ranks 150000+ are special tokens (mapped to their position in default_vocab_size)
+    this.numSpecialTokens = data.config.default_num_special_tokens; // 1000
+
+    // Build vocab lookup: bytes (as raw string) → rank
+    // Ranks are ordered by merge priority (lower = more common)
+    // Ranks 0-255 are individual bytes, 256+ are BPE merges
     for (const entry of data.vocab) {
       const bytes = atob(entry.token_bytes);
-      this.vocab.set(bytes, entry.rank);
+      this.bytesToRank.set(bytes, entry.rank);
     }
 
-    // Special tokens get IDs from default_vocab_size onwards
-    // But actually the special tokens have specific ranks that map to token IDs
-    // In tekken, special_token rank 0 = token ID (default_vocab_size + 0) = 131072
-    // Wait, looking at the data: BOS is rank 1 and its token_id should be 1
-    // Actually in Mistral's tekken, special tokens are prepended:
-    // The first default_num_special_tokens IDs (0-999) are reserved for special tokens
-    // Then vocab tokens start at 1000
-    // But actually from the model config, vocab_size = 131072
-    // Special tokens: rank maps directly to their token ID? Let me check...
-    // Actually the standard Mistral convention:
-    // Token IDs 0..num_special-1 are special tokens (ordered by rank)
-    // Token IDs num_special..vocab_size-1 are BPE tokens
-    const numSpecial = data.config.default_num_special_tokens; // 1000
-
+    // Special tokens
     for (const st of data.special_tokens) {
       this.specialTokens.set(st.token_str, st.rank);
     }
@@ -175,11 +165,13 @@ export class TekkenTokenizer {
   }
 
   /**
-   * Encode text to token IDs using BPE.
-   * This is a simplified encoder — for production use mistral_common.
+   * Encode text to token IDs using proper BPE merging.
    *
-   * For now: split by the regex pattern, then look up each piece in vocab.
-   * Fall back to byte-level encoding for unknown pieces.
+   * Algorithm:
+   * 1. Pre-tokenize using regex pattern (splits into words/chunks)
+   * 2. For each chunk, convert to bytes
+   * 3. Iteratively merge the byte pair with the lowest vocab rank
+   * 4. Map final merged tokens to IDs (rank + num_special_tokens)
    */
   encode(text: string): number[] {
     const tokens: number[] = [];
@@ -188,29 +180,72 @@ export class TekkenTokenizer {
     const matches = text.matchAll(this.pattern);
     for (const match of matches) {
       const piece = match[0];
-
-      // Try direct vocab lookup
-      const id = this.vocab.get(piece);
-      if (id !== undefined) {
-        tokens.push(id + 1000); // offset by num_special_tokens
-        continue;
-      }
-
-      // Fall back to byte-level encoding
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(piece);
-      for (const b of bytes) {
-        const byteStr = String.fromCharCode(b);
-        const byteId = this.vocab.get(byteStr);
-        if (byteId !== undefined) {
-          tokens.push(byteId + 1000);
-        } else {
-          tokens.push(TOKENS.UNK);
-        }
-      }
+      const pieceTokens = this.bpeEncode(piece);
+      tokens.push(...pieceTokens);
     }
 
     return tokens;
+  }
+
+  /**
+   * BPE encode a single pre-tokenized piece.
+   *
+   * Starts with individual bytes and iteratively merges the pair
+   * whose concatenation has the lowest rank in the vocab.
+   */
+  private bpeEncode(piece: string): number[] {
+    // Convert to bytes as raw string chars
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(piece);
+
+    // Start with individual byte strings
+    let parts: string[] = [];
+    for (const b of bytes) {
+      parts.push(String.fromCharCode(b));
+    }
+
+    // If single byte, just return it
+    if (parts.length <= 1) {
+      const rank = this.bytesToRank.get(parts[0]);
+      return [rank !== undefined ? rank + this.numSpecialTokens : TOKENS.UNK];
+    }
+
+    // Iteratively merge the pair with the lowest rank
+    while (parts.length > 1) {
+      // Find the pair whose merge has the lowest rank
+      let bestRank = Infinity;
+      let bestIdx = -1;
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        const merged = parts[i] + parts[i + 1];
+        const rank = this.bytesToRank.get(merged);
+        if (rank !== undefined && rank < bestRank) {
+          bestRank = rank;
+          bestIdx = i;
+        }
+      }
+
+      // No more merges possible
+      if (bestIdx === -1) break;
+
+      // Apply the merge
+      const newParts: string[] = [];
+      for (let i = 0; i < parts.length; i++) {
+        if (i === bestIdx) {
+          newParts.push(parts[i] + parts[i + 1]);
+          i++; // skip next
+        } else {
+          newParts.push(parts[i]);
+        }
+      }
+      parts = newParts;
+    }
+
+    // Convert final parts to token IDs
+    return parts.map(p => {
+      const rank = this.bytesToRank.get(p);
+      return rank !== undefined ? rank + this.numSpecialTokens : TOKENS.UNK;
+    });
   }
 
   /**

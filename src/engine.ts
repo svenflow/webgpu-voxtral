@@ -2404,6 +2404,10 @@ export class VoxtralEngine {
       }
     }
 
+    // Submit all prefill tokens to the GPU queue without awaiting between each one.
+    // WebGPU guarantees in-order execution within a queue, so KV cache writes from
+    // token N are visible to token N+1's attention reads. We only await once at the end,
+    // eliminating ~230 JS↔GPU roundtrips.
     for (let i = 0; i < tokens.length; i++) {
       const tokenId = tokens[i];
       const encoder = this.device!.createCommandEncoder();
@@ -2417,9 +2421,9 @@ export class VoxtralEngine {
       }
 
       this.device!.queue.submit([encoder.finish()]);
-      await this.device!.queue.onSubmittedWorkDone();
       this.position++;
     }
+    await this.device!.queue.onSubmittedWorkDone();
 
     const tPrefill = performance.now();
     onStage?.('backbone', tPrefill - t0);

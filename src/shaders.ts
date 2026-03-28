@@ -667,8 +667,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= params.dim) { return; }
 
   let clamped = clamp(input[i], -1.0, 1.0);
-  let scaled = (clamped + 1.0) * 0.5 * f32(params.levels - 1u);
-  output[i] = u32(round(scaled)) + params.offset;
+  let scaled = round((clamped + 1.0) * 0.5 * f32(params.levels - 1u));
+  output[i] = u32(clamp(scaled, 0.0, f32(params.levels - 1u))) + params.offset;
 }
 `;
 

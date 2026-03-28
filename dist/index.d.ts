@@ -473,10 +473,11 @@ interface TekkenData {
     };
 }
 declare class TekkenTokenizer {
-    private vocab;
+    private bytesToRank;
     private specialTokens;
     private pattern;
     private voiceNumTokens;
+    private numSpecialTokens;
     constructor(data: TekkenData);
     /**
      * Load tokenizer from a URL (tekken.json).
@@ -501,13 +502,22 @@ declare class TekkenTokenizer {
         audioTokenCount: number;
     };
     /**
-     * Encode text to token IDs using BPE.
-     * This is a simplified encoder — for production use mistral_common.
+     * Encode text to token IDs using proper BPE merging.
      *
-     * For now: split by the regex pattern, then look up each piece in vocab.
-     * Fall back to byte-level encoding for unknown pieces.
+     * Algorithm:
+     * 1. Pre-tokenize using regex pattern (splits into words/chunks)
+     * 2. For each chunk, convert to bytes
+     * 3. Iteratively merge the byte pair with the lowest vocab rank
+     * 4. Map final merged tokens to IDs (rank + num_special_tokens)
      */
     encode(text: string): number[];
+    /**
+     * BPE encode a single pre-tokenized piece.
+     *
+     * Starts with individual bytes and iteratively merges the pair
+     * whose concatenation has the lowest rank in the vocab.
+     */
+    private bpeEncode;
     /**
      * Get available voice names.
      */
